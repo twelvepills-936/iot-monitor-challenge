@@ -1,0 +1,76 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: iot_monitor
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./rules.json:/app/rules.json:ro
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/iot_monitor
+      REDIS_URL: redis://redis:6379/0
+      TELEGRAM_API_URL: http://mock-telegram:8001
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery:
+    build: ./backend
+    command: celery -A app.tasks worker --loglevel=info
+    volumes:
+      - ./backend:/app
+      - ./rules.json:/app/rules.json:ro
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/iot_monitor
+      REDIS_URL: redis://redis:6379/0
+      TELEGRAM_API_URL: http://mock-telegram:8001
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  mock-telegram:
+    build: ./mock-telegram
+    ports:
+      - "8001:8001"
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src
+    depends_on:
+      - app
+
+volumes:
+  pgdata:

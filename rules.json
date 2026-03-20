@@ -1,0 +1,16 @@
+{
+  "temperature": {
+    "unit": "°C",
+    "thresholds": {
+      "warning": 35,
+      "critical": 50
+    }
+  },
+  "humidity": {
+    "unit": "%",
+    "thresholds": {
+      "warning": 80,
+      "critical": 95
+    }
+  }
+}
