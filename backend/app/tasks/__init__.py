@@ -1,4 +1,5 @@
 import logging
+import os
 import subprocess
 from pathlib import Path
 
@@ -27,6 +28,15 @@ def apply_alembic_migrations_on_worker_init(**_: object) -> None:
     Миграции применяем на старте воркера, чтобы задачи могли сохранять события в БД.
     """
 
+    if os.getenv("SKIP_MIGRATIONS", "").lower() in {"1", "true", "yes"}:
+        logger.info("SKIP_MIGRATIONS is set; skipping alembic upgrade and creating tables via init_db()")
+        from app.db import init_db
+
+        import asyncio
+
+        asyncio.run(init_db())
+        return
+
     backend_root = Path(__file__).resolve().parents[2]
     alembic_ini = backend_root / "alembic.ini"
 
@@ -42,3 +52,8 @@ def apply_alembic_migrations_on_worker_init(**_: object) -> None:
     except Exception:
         logger.exception("Failed to apply alembic migrations on celery worker startup")
         raise
+
+
+# Важно: worker Celery не “подхватывает” задачи автоматически, если модуль с задачами
+# не импортирован. Импортируем `process.py`, чтобы зарегистрировать `process_sensor_event`.
+from app.tasks import process as _process  # noqa: F401,E402

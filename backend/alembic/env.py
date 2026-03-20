@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import asyncio
 from logging.config import fileConfig
+import sys
 from pathlib import Path
 
 from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
+
+# Alembic запускается из отдельного процесса, и PYTHONPATH может не включать
+# корень проекта. Добавим его явно, чтобы импортировать пакет `app`.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.config import settings
 from app.models.event import Base
@@ -16,8 +23,16 @@ from app.models.event import Base
 config = context.config
 
 # Interpret the config file for Python logging.
+#
+# В некоторых минимальных конфигурациях ini-файла могут отсутствовать секции,
+# ожидаемые alembic (например, `formatters`). Логирование нам не критично для
+# миграций, поэтому сделаем загрузку безопасной.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    try:
+        fileConfig(config.config_file_name)
+    except Exception:
+        # При ошибке конфигурации логов не останавливаем миграции.
+        pass
 
 # Set target metadata for 'autogenerate' support.
 target_metadata = Base.metadata

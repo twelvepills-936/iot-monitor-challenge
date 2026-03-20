@@ -10,6 +10,7 @@ Celery-задача обработки событий от датчиков.
 
 from __future__ import annotations
 
+import threading
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,12 +19,19 @@ import httpx
 from sqlalchemy import select
 
 from app.config import settings
-from app.db import AsyncSessionLocal, init_db
+from app.db import get_session, init_db
 from app.models.event import SensorEvent
 from app.tasks import celery_app
 
 
 _RULES_CACHE: dict | None = None
+
+# Async SQLAlchemy/asyncpg привязываются к event loop.
+# Celery task синхронная, поэтому поднимаем один event loop в фоне и выполняем
+# все coroutine в нём, чтобы не ловить "attached to a different loop".
+_ASYNC_LOOP: object | None = None
+_ASYNC_LOOP_THREAD: threading.Thread | None = None
+_ASYNC_LOOP_LOCK = threading.Lock()
 
 
 def _load_rules() -> dict:
@@ -100,9 +108,10 @@ async def _upsert_event_async(
     notification_sent: bool,
     error_message: str | None,
 ) -> SensorEvent:
+    # init_db() гарантирует наличие таблицы.
     await init_db()
 
-    async with AsyncSessionLocal() as session:
+    async with get_session() as session:
         stmt = select(SensorEvent).where(
             SensorEvent.sensor_id == sensor_id,
             SensorEvent.created_at == created_at,
@@ -139,26 +148,27 @@ async def _upsert_event_async(
 
 
 def _run_async(coro):
-    """
-    Запуск async-кода из sync-задачи Celery.
-
-    Если event loop уже запущен в текущем потоке, запускаем coroutine в отдельном
-    thread'е, чтобы корректно дождаться результата.
-    """
-
     import asyncio
-    import concurrent.futures
 
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        # Loop не запущен — обычный путь.
-        return asyncio.run(coro)
+    global _ASYNC_LOOP, _ASYNC_LOOP_THREAD
 
-    # Loop уже запущен (часто в тестах) — запускаем в отдельном потоке.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(lambda: asyncio.run(coro))
-        return future.result()
+    # Создаём loop один раз на процесс.
+    if _ASYNC_LOOP is None or _ASYNC_LOOP_THREAD is None:
+        with _ASYNC_LOOP_LOCK:
+            if _ASYNC_LOOP is None or _ASYNC_LOOP_THREAD is None:
+                loop = asyncio.new_event_loop()
+
+                def _runner():
+                    asyncio.set_event_loop(loop)
+                    loop.run_forever()
+
+                t = threading.Thread(target=_runner, daemon=True)
+                t.start()
+                _ASYNC_LOOP = loop
+                _ASYNC_LOOP_THREAD = t
+
+    fut = asyncio.run_coroutine_threadsafe(coro, _ASYNC_LOOP)  # type: ignore[arg-type]
+    return fut.result()
 
 
 @celery_app.task(name="process_sensor_event", bind=True, max_retries=3)

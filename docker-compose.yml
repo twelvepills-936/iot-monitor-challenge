@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: iot_monitor
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -36,6 +36,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/iot_monitor
       REDIS_URL: redis://redis:6379/0
       TELEGRAM_API_URL: http://mock-telegram:8001
+      SKIP_MIGRATIONS: "1"
     depends_on:
       db:
         condition: service_healthy
@@ -52,6 +53,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/iot_monitor
       REDIS_URL: redis://redis:6379/0
       TELEGRAM_API_URL: http://mock-telegram:8001
+      SKIP_MIGRATIONS: "1"
     depends_on:
       db:
         condition: service_healthy
